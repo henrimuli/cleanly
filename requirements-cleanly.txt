@@ -1,0 +1,12 @@
+# Cleanly (Windows) runtime and build dependencies.
+# Engine dependencies
+-r requirements.txt
+certifi==2026.10.19
+charset_normalizer==3.5.2
+plyer==2.1.0
+pypiwin32==223
+winshell==0.6
+# User interface: Microsoft Edge WebView2 through pywebview
+pywebview==6.2.1
+# Build: one-folder Windows app (see cleanly.spec)
+pyinstaller==6.22.3

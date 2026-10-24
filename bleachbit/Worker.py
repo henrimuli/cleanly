@@ -167,6 +167,11 @@ class Worker:
             line = "%s %s %s\n" % (ret['label'], size, path)
             self.total_deleted += ret['n_deleted']
             self.total_special += ret['n_special']
+            # Optional hook so a UI can attribute each result to its
+            # cleaner option (e.g., item counts and file lists).
+            on_command_result = getattr(self.ui, 'on_command_result', None)
+            if on_command_result:
+                on_command_result(operation_option, ret)
             if ret['label']:
                 # the label may be a hidden operation
                 # (e.g., win.shell.change.notify)

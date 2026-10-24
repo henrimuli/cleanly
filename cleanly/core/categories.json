@@ -1,0 +1,155 @@
+{
+  "_comment": "Maps engine options ('cleaner_id.option_id', fnmatch patterns) to friendly categories. The first matching category wins. Options that match nothing appear only in Custom mode.",
+  "exclude": [
+    "deepscan.*",
+    "system.empty_space",
+    "system.memory",
+    "system.custom",
+    "system.free_disk_space",
+    "*.passwords"
+  ],
+  "disk": [
+    {
+      "id": "recycle_bin",
+      "label": "Recycle Bin",
+      "description": "Files you deleted that are still kept in the Recycle Bin.",
+      "mode": "basic",
+      "default": false,
+      "match": ["system.recycle_bin", "system.trash"]
+    },
+    {
+      "id": "windows_temp",
+      "label": "Windows temp files",
+      "description": "Temporary files Windows created and no longer needs.",
+      "mode": "basic",
+      "match": ["system.tmp", "windows_defender.temp"]
+    },
+    {
+      "id": "program_temp",
+      "label": "Program temp files",
+      "description": "Temporary files left behind by installed programs.",
+      "mode": "basic",
+      "match": ["*.tmp", "*.temp"]
+    },
+    {
+      "id": "windows_logs",
+      "label": "Windows log files",
+      "description": "Diagnostic logs written by Windows.",
+      "mode": "basic",
+      "match": ["system.logs", "windows_defender.logs"]
+    },
+    {
+      "id": "program_logs",
+      "label": "Program log files",
+      "description": "Diagnostic logs written by installed programs.",
+      "mode": "basic",
+      "match": ["*.logs", "*.debug_logs", "*.rotated_logs"]
+    },
+    {
+      "id": "crash_reports",
+      "label": "Crash reports and memory dumps",
+      "description": "Reports saved after programs or Windows crashed.",
+      "mode": "basic",
+      "match": ["system.memory_dump", "*.crash_reports"]
+    },
+    {
+      "id": "windows_cache",
+      "label": "Windows cache files",
+      "description": "Thumbnail and other caches Windows can rebuild.",
+      "mode": "basic",
+      "match": ["windows_explorer.thumbnails", "system.cache"]
+    },
+    {
+      "id": "program_cache",
+      "label": "Program cache files",
+      "description": "Caches that programs rebuild when needed.",
+      "mode": "basic",
+      "match": ["*.cache"]
+    },
+    {
+      "id": "program_downloads",
+      "label": "Program download files",
+      "description": "Installers and updates that programs downloaded and already used.",
+      "mode": "basic",
+      "match": ["*.installers", "*.old_versions"]
+    },
+    {
+      "id": "windows_update",
+      "label": "Windows Update leftovers",
+      "description": "Old update files. Cleaning may need administrator rights.",
+      "mode": "full",
+      "match": ["system.updates"]
+    },
+    {
+      "id": "system_caches",
+      "label": "System caches",
+      "description": "Prefetch, MUICache and DNS cache. Windows rebuilds them, so the first start of some apps may be slower.",
+      "mode": "full",
+      "match": ["system.prefetch", "system.muicache", "system.dns_cache"]
+    },
+    {
+      "id": "recent_activity",
+      "label": "Recent activity",
+      "description": "Lists of recently opened files, searches and commands.",
+      "mode": "full",
+      "match": ["*.mru", "*.recent_documents", "windows_explorer.run", "windows_explorer.search_history", "windows_explorer.shellbags", "*.history"]
+    },
+    {
+      "id": "clipboard",
+      "label": "Clipboard",
+      "description": "Whatever is currently copied to the clipboard.",
+      "mode": "full",
+      "match": ["system.clipboard"]
+    },
+    {
+      "id": "compact_databases",
+      "label": "Compact app databases",
+      "description": "Shrinks app databases without deleting anything.",
+      "mode": "full",
+      "match": ["*.vacuum"]
+    }
+  ],
+  "browsers": {
+    "ids": [
+      "google_chrome", "microsoft_edge", "firefox", "brave", "opera",
+      "vivaldi", "chromium", "waterfox", "librewolf", "palemoon", "zen",
+      "helium", "seamonkey", "internet_explorer", "safari_windows"
+    ],
+    "options": {
+      "cache": "basic",
+      "crash_reports": "basic",
+      "old_versions": "basic",
+      "ai": "full",
+      "backup": "full",
+      "cookies": "full",
+      "history": "full",
+      "url_history": "full",
+      "form_history": "full",
+      "forms": "full",
+      "session": "full",
+      "site_data": "full",
+      "site_preferences": "full",
+      "search_engines": "full",
+      "sync": "full",
+      "vacuum": "full"
+    },
+    "labels": {
+      "cache": "Cache",
+      "crash_reports": "Crash reports",
+      "old_versions": "Old browser versions",
+      "ai": "On-device AI models",
+      "backup": "Backups",
+      "cookies": "Cookies",
+      "history": "Browsing history",
+      "url_history": "Browsing history",
+      "form_history": "Form history",
+      "forms": "Form history",
+      "session": "Open tabs and session",
+      "site_data": "Site data",
+      "site_preferences": "Site preferences",
+      "search_engines": "Search engines",
+      "sync": "Sync data",
+      "vacuum": "Compact databases"
+    }
+  }
+}

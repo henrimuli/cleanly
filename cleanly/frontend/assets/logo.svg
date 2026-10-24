@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Cleanly">
+  <defs>
+    <linearGradient id="cleanly-bg" x1="8" y1="4" x2="58" y2="62" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4BE8AE"/>
+      <stop offset="1" stop-color="#0E9C8F"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="18" fill="url(#cleanly-bg)"/>
+  <!-- An open ring: the C of Cleanly, swept clean -->
+  <path d="M44.6 21.4A16 16 0 1 0 44.6 42.6" fill="none" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round"/>
+  <!-- Sparkle in the opening -->
+  <path d="M48 26.5l1.9 4.6 4.6 1.9-4.6 1.9L48 39.5l-1.9-4.6-4.6-1.9 4.6-1.9z" fill="#FFFFFF"/>
+</svg>
