@@ -34,12 +34,17 @@ def _empty():
         'items_removed': 0,
         'cleanings': 0,
         'last_scan': None,
+        'last_background': None,
         'history': [],
     }
 
 
 class Stats:
-    """Read and update stats.json"""
+    """Read and update stats.json
+
+    The app and a scheduled background scan are separate processes that
+    both write this file, so every update re-reads it first.
+    """
 
     def __init__(self, data_dir=None):
         self.path = os.path.join(data_dir or default_data_dir(), 'stats.json')
@@ -60,18 +65,27 @@ class Stats:
 
     def _save(self):
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
-        tmp = self.path + '.tmp'
+        tmp = '%s.%d.tmp' % (self.path, os.getpid())
         with open(tmp, 'w', encoding='utf-8') as f:
             json.dump(self.data, f, indent=1)
         os.replace(tmp, self.path)
 
     def record_scan(self, summary):
         with self._lock:
+            self.data = self._load()
             self.data['last_scan'] = summary
+            self._save()
+
+    def record_background(self, summary):
+        """What the last scheduled scan found or cleaned"""
+        with self._lock:
+            self.data = self._load()
+            self.data['last_background'] = summary
             self._save()
 
     def record_clean(self, summary):
         with self._lock:
+            self.data = self._load()
             self.data['bytes_freed'] += summary.get('bytes', 0)
             self.data['items_removed'] += summary.get('items', 0)
             self.data['cleanings'] += 1
@@ -79,6 +93,8 @@ class Stats:
                 'time': summary.get('finished'),
                 'bytes': summary.get('bytes', 0),
                 'items': summary.get('items', 0),
+                'categories': summary.get('categories', []),
+                'source': summary.get('source', 'manual'),
             })
             del self.data['history'][MAX_HISTORY:]
             self._save()
@@ -95,4 +111,5 @@ class Stats:
 
     def to_dict(self):
         with self._lock:
+            self.data = self._load()
             return json.loads(json.dumps(self.data))

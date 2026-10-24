@@ -63,8 +63,37 @@ def self_check():
     if os.name == 'nt':
         # Loads pythonnet and the WebView2 assemblies
         importlib.import_module('webview.platforms.winforms')
+        # Notifications for scheduled scans
+        importlib.import_module('plyer.platforms.win.notification')
     if not categories:
         raise RuntimeError('No cleaning categories found')
+    return 0
+
+
+def use_own_engine_settings():
+    """Keep the engine's settings in %APPDATA%\\Cleanly\\engine
+
+    Otherwise Cleanly would share bleachbit.ini (and its keep list) with
+    a BleachBit installation. Must run before bleachbit is imported.
+    """
+    from cleanly.core.stats import default_data_dir
+    os.environ.setdefault('BLEACHBIT_TEST_OPTIONS_DIR',
+                          os.path.join(default_data_dir(), 'engine'))
+
+
+def background_scan():
+    """Scheduled scan without a window; see cleanly.core.background"""
+    from cleanly.core import background
+    from cleanly.core.engine import Engine
+    from cleanly.core.settings import Settings
+    from cleanly.core.stats import Stats
+
+    stats = Stats()
+    try:
+        background.run(Engine(stats), stats, Settings().load())
+    except Exception:  # pylint: disable=broad-exception-caught
+        logger.exception('background scan failed')
+        return 1
     return 0
 
 
@@ -72,8 +101,13 @@ def main():
     if os.name == 'nt' and hasattr(sys, '_MEIPASS'):
         unblock_bundle(sys._MEIPASS)  # pylint: disable=protected-access
 
+    use_own_engine_settings()
     from bleachbit.Bootstrap import bootstrap
     bootstrap()
+
+    from cleanly.core.scheduler import BACKGROUND_ARG
+    if BACKGROUND_ARG in sys.argv:
+        sys.exit(background_scan())
 
     if '--self-check' in sys.argv:
         # A windowed build has no console, and an unhandled exception
@@ -89,12 +123,13 @@ def main():
 
     from cleanly.bridge.api import Api
     from cleanly.core.engine import Engine
+    from cleanly.core.settings import Settings
     from cleanly.core.stats import Stats
 
     stats = Stats()
     engine = Engine(stats)
     engine.load()
-    api = Api(engine, stats)
+    api = Api(engine, stats, Settings())
 
     window = webview.create_window(
         APP_NAME,

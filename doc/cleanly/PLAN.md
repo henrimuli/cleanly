@@ -47,6 +47,11 @@ cleanly/
     categories.py     builds categories from the registered cleaners
     engine.py         threaded scan (preview) and clean through bleachbit.Worker
     stats.py          lifetime totals and history (%APPDATA%\Cleanly\stats.json)
+    settings.py       Cleanly's preferences (settings.json)
+    scheduler.py      Task Scheduler task "Cleanly Background Scan"
+    background.py     the scheduled scan: scan, maybe clean, notify
+    exclusions.py     "Never clean" paths and cookies to keep (engine storage)
+    notify.py         Windows notifications
   frontend/           index.html, styles.css, js/, assets/
 bleachbit/            the engine, mostly unchanged
 ```
@@ -65,6 +70,13 @@ bleachbit/            the engine, mostly unchanged
   - *Custom*: any manual change.
 - Before cleaning, Cleanly warns about sign-outs (cookies, sessions), the
   Recycle Bin, and browsers that are open (those are skipped).
+- **Scheduled scans** are a Task Scheduler task that runs
+  `Cleanly.exe --background-scan` as the signed-in user. Nothing stays
+  running between scans. A missed run happens at the next chance, and
+  scans don't start on battery power. A scheduled scan notifies when it finds
+  at least 100 MB. With auto-clean on, it cleans only what Basic mode would.
+- The engine's settings (the "Never clean" list, cookies to keep) live in
+  `%APPDATA%\Cleanly\engine`, separate from any BleachBit installation.
 
 ## Screens
 
@@ -87,7 +99,7 @@ bleachbit/            the engine, mostly unchanged
 | 0 | pywebview shell, PyInstaller spec, Windows CI build | Done |
 | 1 | Core: threaded scan/clean, counts, categories, stats, tests | Done |
 | 2 | Home, Disk cleaner, Browser cleaner, review drawer, result screen | First version done. Needs a test run on real Windows. |
-| 3 | Scheduled scans (Task Scheduler, `--background-scan`), notifications, history page, exclusions UI, cookie allowlist UI | Next |
+| 3 | Scheduled scans (Task Scheduler, `--background-scan`), notifications, optional Basic auto-clean, History page, "Never clean" list, cookies to keep | Done. Needs a test run on real Windows. |
 | 4 | Broken shortcuts (IShellLink, sent to the Recycle Bin). Conservative registry scan (missing-file references only, `reg export` backup, undo). | |
 | 5 | Apps: installed list (Uninstall keys and Store apps), "unused" from Prefetch and UserAssist, uninstall, leftover review, startup apps | |
 | 6 | Disks: HDD/SSD detection, `defrag /A` and `/O`, SMART health, large files | |

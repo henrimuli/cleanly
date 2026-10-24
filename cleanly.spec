@@ -29,7 +29,10 @@ a = Analysis(
     ['cleanly/__main__.py'],
     pathex=['.'],
     datas=datas,
-    hiddenimports=collect_submodules('bleachbit', filter=_engine_module),
+    hiddenimports=collect_submodules('bleachbit', filter=_engine_module) + [
+        # plyer picks its platform module at run time
+        'plyer.platforms.win.notification',
+    ],
     excludes=['gi', 'gtk', 'cairo', 'tkinter'],
 )
 pyz = PYZ(a.pure)

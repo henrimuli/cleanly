@@ -278,8 +278,17 @@ class Engine:
                 on_done({'error': str(e)})
         return self._start_job(do_scan)
 
-    def clean(self, operations, on_progress, on_done):
-        """Clean the given 'cleaner.option' strings in a background thread"""
+    def _category_labels(self, results):
+        """Labels of the categories that had results, for the history"""
+        found = {op for op, r in results.items() if r.items or r.bytes}
+        return [c.label for c in self.categories
+                if any('%s.%s' % o in found for o in c.options)]
+
+    def clean(self, operations, on_progress, on_done, source='manual'):
+        """Clean the given 'cleaner.option' strings in a background thread
+
+        source: 'manual' or 'scheduled', recorded in the history
+        """
         known = self._known_operations()
         unknown = [op for op in operations if op not in known]
         if unknown:
@@ -303,6 +312,8 @@ class Engine:
                     'skipped_running': [backends[cid].get_name()
                                         for cid in skipped],
                     'errors': collector.errors,
+                    'categories': self._category_labels(collector.results),
+                    'source': source,
                 }
                 if self.stats:
                     self.stats.record_clean(summary)
@@ -357,6 +368,20 @@ class ScanResult:
         d['selected'] = {mode: category.is_selected_in(mode)
                          for mode in (cat.BASIC, cat.FULL)}
         return d
+
+    def basic_operations(self):
+        """Operations Basic mode selects that found something
+
+        The same choice the UI makes by default, used by auto-clean.
+        """
+        operations = []
+        for category in self.categories:
+            if category.running or not category.is_selected_in(cat.BASIC):
+                continue
+            for cleaner_id, option_id in category.options_for(cat.BASIC):
+                if self._result(cleaner_id, option_id).items:
+                    operations.append('%s.%s' % (cleaner_id, option_id))
+        return operations
 
     def items_for(self, category):
         items = []

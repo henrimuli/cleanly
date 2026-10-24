@@ -277,9 +277,12 @@ p { margin: 0; }
 .footer .summary .muted { font-size: 13px; }
 
 /* ---------- Drawer and dialog ---------- */
-.scrim { position: fixed; inset: 0; background: rgba(0, 0, 0, .45); z-index: 20; display: flex; justify-content: flex-end; animation: fade .15s; }
+.scrim { position: fixed; inset: 0; background: rgba(0, 0, 0, .45); z-index: 20; display: flex; justify-content: flex-end; }
+/* Overlays animate only when they open, not on every re-render */
+.scrim.enter { animation: fade .15s; }
 @keyframes fade { from { opacity: 0; } }
-.drawer { width: min(560px, 92vw); height: 100%; background: var(--surface); border-left: 1px solid var(--border); display: flex; flex-direction: column; box-shadow: var(--shadow); animation: slide .18s ease-out; }
+.drawer { width: min(560px, 92vw); height: 100%; background: var(--surface); border-left: 1px solid var(--border); display: flex; flex-direction: column; box-shadow: var(--shadow); }
+.enter .drawer { animation: slide .18s ease-out; }
 @keyframes slide { from { transform: translateX(30px); opacity: 0; } }
 .drawer-head { padding: 22px 24px 14px; display: flex; gap: 12px; align-items: flex-start; border-bottom: 1px solid var(--border); }
 .drawer-head .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -294,7 +297,8 @@ p { margin: 0; }
 .icon-btn svg { width: 18px; height: 18px; }
 
 .scrim.center { justify-content: center; align-items: center; }
-.dialog { width: min(440px, 92vw); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 12px; animation: pop .15s ease-out; }
+.dialog { width: min(440px, 92vw); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 12px; }
+.enter .dialog { animation: pop .15s ease-out; }
 @keyframes pop { from { transform: scale(.97); opacity: 0; } }
 .dialog ul { margin: 0; padding-left: 18px; color: var(--text-muted); }
 .dialog .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; }
@@ -321,3 +325,53 @@ p { margin: 0; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ---------- Settings, history ---------- */
+.setting-row { display: flex; align-items: center; gap: 14px; padding: 12px 0; border-top: 1px solid var(--border); }
+.setting-row:first-of-type { border-top: 0; }
+.setting-row .grow { flex: 1; min-width: 0; }
+.setting-row .hint { color: var(--text-muted); font-size: 12.5px; }
+.card .lead { color: var(--text-muted); margin-bottom: 10px; }
+.field { height: 34px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--text); font: inherit; }
+.field:focus { outline: 2px solid var(--primary); outline-offset: 0; border-color: transparent; }
+input.field[type="time"] { color-scheme: inherit; }
+.switch { appearance: none; width: 40px; height: 22px; border-radius: 999px; background: var(--border-strong); position: relative; cursor: pointer; flex: none; margin: 0; transition: background .15s; }
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.switch:checked { background: var(--primary); }
+.switch:checked::after { transform: translateX(18px); }
+.switch:disabled { opacity: .45; cursor: default; }
+
+.list { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; margin: 6px 0 12px; }
+.list-row { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-top: 1px solid var(--border); }
+.list-row:first-child { border-top: 0; }
+.list-row > svg { width: 16px; height: 16px; color: var(--text-muted); flex: none; }
+.list-row .p { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; font-size: 13px; user-select: text; }
+.list-row .icon-btn svg { width: 15px; height: 15px; }
+.list-empty { padding: 12px; color: var(--text-muted); font-size: 13px; }
+.button-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 12px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px 4px 12px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); font-size: 13px; }
+.chip .icon-btn { padding: 2px; }
+.chip .icon-btn svg { width: 13px; height: 13px; }
+
+.drawer-tools { padding: 12px 24px; border-bottom: 1px solid var(--border); display: flex; gap: 10px; }
+.drawer-tools .field { flex: 1; }
+.pick-row { display: flex; align-items: center; gap: 12px; padding: 8px 24px; cursor: pointer; }
+.pick-row:hover { background: var(--surface-hover); }
+.drawer-foot { padding: 14px 24px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 10px; align-items: center; }
+.drawer-foot .muted { flex: 1; font-size: 13px; }
+
+.path-row { grid-template-columns: minmax(0, 1fr) 80px 28px; align-items: center; }
+.path-row .keep { opacity: 0; }
+.path-row:hover .keep, .path-row .keep:focus-visible { opacity: 1; }
+.path-row.kept .p { color: var(--text-faint); text-decoration: line-through; }
+.path-row .kept-label { font-size: 11px; color: var(--primary); font-family: var(--font); }
+
+.history { display: flex; flex-direction: column; gap: 12px; max-width: 760px; }
+.history-entry { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; }
+.history-entry .size { font-family: var(--font-display); font-size: 18px; font-weight: 600; text-align: right; }
+.history-entry .what { color: var(--text-muted); font-size: 13px; grid-column: 1 / -1; }
+.link-btn { border: 0; background: none; color: var(--primary); cursor: pointer; padding: 0; font: inherit; font-size: 13px; }
+.link-btn:hover { text-decoration: underline; }
+.card-head .link-btn { margin-left: auto; }

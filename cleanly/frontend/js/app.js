@@ -19,7 +19,12 @@ const state = {
   view: 'home',
   tab: 'disk',
   expanded: new Set(),
-  drawer: null, // {category, items}
+  drawer: null, // {category, items} or {picker: true, ...}
+  settings: null, // {settings, scheduled}
+  exclusions: null,
+  keptCookies: null,
+  cookieInput: '',
+  history: null,
   dialog: null,
   lastClean: null,
   toast: null,
@@ -149,6 +154,91 @@ function go(view) {
   state.view = view;
   state.drawer = null;
   render();
+  if (view === 'settings') loadSettings();
+  if (view === 'history') loadHistory();
+}
+
+// ---------- Settings, exclusions, cookies, history ----------
+
+async function loadSettings() {
+  const [settings, exclusions, cookies] = await Promise.all([
+    state.api.get_settings(), state.api.get_exclusions(), state.api.get_kept_cookies()]);
+  state.settings = settings;
+  state.exclusions = exclusions.ok ? exclusions.paths : [];
+  state.keptCookies = cookies.ok ? cookies.domains : [];
+  await refreshOverview();
+  render();
+}
+
+async function loadHistory() {
+  state.history = await state.api.get_history();
+  render();
+}
+
+async function updateSettings(change) {
+  const next = structuredClone(state.settings.settings);
+  change(next);
+  const previous = state.settings;
+  state.settings = { ...previous, settings: next };
+  render();
+  const res = await state.api.save_settings(next);
+  if (!res.ok) {
+    state.settings = previous;
+    showToast(res.error);
+    return;
+  }
+  state.settings = await state.api.get_settings();
+  render();
+}
+
+async function addExclusion(pathType) {
+  const res = await state.api.choose_exclusion(pathType);
+  if (!res.ok) return showToast(res.error);
+  state.exclusions = res.paths;
+  render();
+}
+
+async function removeExclusion(path) {
+  const res = await state.api.remove_exclusion(path);
+  if (res.ok) state.exclusions = res.paths;
+  render();
+}
+
+async function excludeFound(item) {
+  const res = await state.api.exclude_found(item.path);
+  if (!res.ok) return showToast(res.error);
+  item.kept = true;
+  state.exclusions = res.paths;
+  showToast('Added to Never clean. Re-scan to update the totals.');
+}
+
+async function saveKeptCookies(domains) {
+  const res = await state.api.set_kept_cookies(domains);
+  if (!res.ok) return showToast(res.error);
+  state.keptCookies = res.domains;
+  render();
+  return true;
+}
+
+async function addCookieFromInput() {
+  const value = state.cookieInput.trim();
+  if (!value) return;
+  if (await saveKeptCookies([...state.keptCookies, value])) state.cookieInput = '';
+  render();
+}
+
+async function openCookiePicker() {
+  state.drawer = { picker: true, sites: null, chosen: new Set(state.keptCookies), filter: '' };
+  render();
+  const res = await state.api.get_cookie_sites();
+  if (!state.drawer || !state.drawer.picker) return;
+  if (!res.ok) {
+    state.drawer = null;
+    showToast(`Could not read cookies: ${res.error}`);
+    return;
+  }
+  state.drawer.sites = [...new Set([...res.sites, ...state.keptCookies])].sort();
+  render();
 }
 
 // ---------- Events from Python ----------
@@ -242,6 +332,7 @@ const VIEWS = {
   apps: { title: 'Apps', render: appsView, back: true },
   disks: { title: 'Disks', render: disksView, back: true },
   settings: { title: 'Settings', render: settingsView, back: true },
+  history: { title: 'History', render: historyView, back: true },
   result: { title: () => (state.job ? 'Cleaning' : 'All done'), render: resultView, back: true },
 };
 
@@ -302,7 +393,8 @@ function homeView() {
       h('div', { class: 'stat' }, h('div', { class: 'value' }, fmt.count(stats.items_removed)), h('div', { class: 'label' }, 'items removed')),
       h('div', { class: 'stat' }, h('div', { class: 'value' }, fmt.count(stats.cleanings)), h('div', { class: 'label' }, stats.cleanings === 1 ? 'cleaning' : 'cleanings'))),
     h('section', { class: 'card' },
-      h('div', { class: 'card-head' }, icon('clock'), h('h3', null, 'Recent cleanings')),
+      h('div', { class: 'card-head' }, icon('clock'), h('h3', null, 'Recent cleanings'),
+        stats.history.length > 0 && h('button', { class: 'link-btn', onclick: () => go('history') }, 'See all')),
       stats.history.length
         ? stats.history.slice(0, 5).map(e => h('div', { class: 'history-row' }, h('span', { class: 'muted' }, fmt.date(e.time)), h('span', null, fmt.bytes(e.bytes))))
         : h('p', { class: 'muted' }, 'Nothing yet.')));
@@ -512,9 +604,88 @@ function applyTheme(theme) {
   else document.documentElement.setAttribute('data-theme', theme);
 }
 
+const WEEKDAYS = [['MON', 'Monday'], ['TUE', 'Tuesday'], ['WED', 'Wednesday'],
+  ['THU', 'Thursday'], ['FRI', 'Friday'], ['SAT', 'Saturday'], ['SUN', 'Sunday']];
+
+function settingRow(title, hint, control) {
+  return h('div', { class: 'setting-row' },
+    h('div', { class: 'grow' }, h('div', null, title), hint && h('div', { class: 'hint' }, hint)),
+    control);
+}
+
+function toggle(checked, label, onchange, disabled) {
+  const el = h('input', { type: 'checkbox', class: 'switch', role: 'switch', 'aria-label': label, disabled, onchange: e => onchange(e.target.checked) });
+  el.checked = !!checked;
+  return el;
+}
+
+function scheduleCard() {
+  if (!state.settings) return h('section', { class: 'card' }, h('h3', null, 'Scheduled scans'), h('p', { class: 'muted' }, 'Loading\u2026'));
+  const st = state.settings.settings;
+  const sched = st.schedule;
+  const on = sched.frequency !== 'off';
+  const bg = state.stats && state.stats.last_background;
+  let lastRun = 'No background scan has run yet.';
+  if (bg) {
+    lastRun = `Last background scan ${fmt.ago(bg.time)}: ${bg.cleaned_bytes ? `freed ${fmt.bytes(bg.cleaned_bytes)}` : `found ${fmt.bytes(bg.found_bytes)}`}.`;
+  }
+  return h('section', { class: 'card' },
+    h('div', { class: 'card-head' }, icon('clock'), h('h3', null, 'Scheduled scans')),
+    h('p', { class: 'lead' }, 'Cleanly can scan in the background, even when it is closed. Nothing keeps running between scans, and scans wait if your laptop is on battery.'),
+    settingRow('How often', null,
+      h('div', { class: 'segmented', role: 'group', 'aria-label': 'How often' },
+        [['off', 'Off'], ['daily', 'Daily'], ['weekly', 'Weekly']].map(([value, label]) =>
+          h('button', { 'aria-pressed': String(sched.frequency === value), onclick: () => updateSettings(n => { n.schedule.frequency = value; }) }, label)))),
+    on && settingRow('When', 'If your PC is off then, the scan runs the next time it is on.',
+      h('div', { class: 'button-row' },
+        sched.frequency === 'weekly' && h('select', { class: 'field', 'aria-label': 'Day', onchange: e => updateSettings(n => { n.schedule.weekday = e.target.value; }) },
+          WEEKDAYS.map(([value, label]) => h('option', { value, selected: sched.weekday === value }, label))),
+        h('input', { class: 'field', type: 'time', value: sched.time, 'aria-label': 'Time', onchange: e => { if (e.target.value) updateSettings(n => { n.schedule.time = e.target.value; }); } }))),
+    settingRow('Notify me', `When a scan finds at least ${fmt.bytes(st.notify_min_bytes)} of junk, or after an automatic clean.`,
+      toggle(st.notify, 'Notify me', v => updateSettings(n => { n.notify = v; }), !on)),
+    settingRow('Clean automatically', 'Cleans what Basic mode would: temp files, logs and caches. History, cookies and the Recycle Bin are never cleaned automatically.',
+      toggle(st.auto_clean, 'Clean automatically', v => updateSettings(n => { n.auto_clean = v; }), !on)),
+    h('p', { class: 'faint', style: 'margin-top:8px;font-size:12.5px' }, on && !state.settings.scheduled ? 'The scheduled task is missing. Choose a schedule again to recreate it.' : lastRun));
+}
+
+function exclusionsCard() {
+  const list = state.exclusions;
+  return h('section', { class: 'card' },
+    h('div', { class: 'card-head' }, icon('shield'), h('h3', null, 'Never clean')),
+    h('p', { class: 'lead' }, 'Files and folders here are never cleaned by any category. You can also add items from the file list in Clean junk.'),
+    h('div', { class: 'list' },
+      list === null ? h('div', { class: 'list-empty' }, 'Loading\u2026')
+        : list.length === 0 ? h('div', { class: 'list-empty' }, 'Nothing added yet.')
+          : list.map(item => h('div', { class: 'list-row' },
+            icon(item.type === 'folder' ? 'folder' : 'files'),
+            h('span', { class: 'p', title: item.path }, h('bdi', null, item.path)),
+            h('button', { class: 'icon-btn', 'aria-label': `Remove ${item.path}`, title: 'Remove', onclick: () => removeExclusion(item.path) }, icon('close'))))),
+    h('div', { class: 'button-row' },
+      h('button', { class: 'btn btn-outline', onclick: () => addExclusion('folder') }, icon('folder'), 'Add folder'),
+      h('button', { class: 'btn btn-outline', onclick: () => addExclusion('file') }, icon('files'), 'Add file')));
+}
+
+function cookiesCard() {
+  const kept = state.keptCookies;
+  return h('section', { class: 'card' },
+    h('div', { class: 'card-head' }, icon('globe'), h('h3', null, 'Cookies to keep')),
+    h('p', { class: 'lead' }, 'Cookies keep you signed in to websites. When cookies are cleaned, the ones for these sites stay.'),
+    kept === null ? h('p', { class: 'muted' }, 'Loading\u2026')
+      : kept.length === 0 ? h('p', { class: 'muted', style: 'margin-bottom:12px' }, 'No sites yet: cleaning cookies signs you out everywhere.')
+        : h('div', { class: 'chips' }, kept.map(domain => h('span', { class: 'chip' }, domain,
+          h('button', { class: 'icon-btn', 'aria-label': `Stop keeping ${domain}`, onclick: () => saveKeptCookies(kept.filter(d => d !== domain)) }, icon('close'))))),
+    h('form', { class: 'button-row', onsubmit: e => { e.preventDefault(); addCookieFromInput(); } },
+      h('input', { class: 'field', 'data-key': 'cookie-input', placeholder: 'example.com', 'aria-label': 'Website to keep', value: state.cookieInput, oninput: e => { state.cookieInput = e.target.value; } }),
+      h('button', { class: 'btn btn-outline', type: 'submit' }, 'Add'),
+      h('button', { class: 'btn btn-ghost', type: 'button', onclick: openCookiePicker }, 'Choose from your browsers')));
+}
+
 function settingsView() {
   const theme = readTheme();
   return h('div', { class: 'settings-list' },
+    scheduleCard(),
+    exclusionsCard(),
+    cookiesCard(),
     h('section', { class: 'card' },
       h('div', { class: 'card-head' }, h('h3', null, 'Appearance')),
       h('div', { class: 'toolbar' },
@@ -522,12 +693,55 @@ function settingsView() {
         h('div', { class: 'segmented', role: 'group', 'aria-label': 'Theme' },
           ['system', 'dark', 'light'].map(t => h('button', { 'aria-pressed': String(theme === t), onclick: () => setTheme(t) }, t[0].toUpperCase() + t.slice(1)))))),
     h('section', { class: 'card' },
-      h('div', { class: 'card-head' }, h('h3', null, 'Scheduled scans')),
-      h('p', { class: 'muted' }, 'Coming soon: let Cleanly scan in the background and tell you when there is something to clean.')),
-    h('section', { class: 'card' },
       h('div', { class: 'card-head' }, icon('shield'), h('h3', null, `About ${state.info.name}`)),
       h('p', null, `Version ${state.info.version}`),
       h('p', { class: 'muted', style: 'margin-top:6px' }, 'Cleanly is free and open-source software under the GNU GPL version 3 or later. It is built on the BleachBit cleaning engine by Andrew Ziem and contributors.')));
+}
+
+function historyView() {
+  const data = state.history;
+  if (!data) return h('p', { class: 'muted' }, 'Loading\u2026');
+  const stats = state.stats || { bytes_freed: 0, cleanings: 0 };
+  if (!data.history.length) {
+    return h('div', { class: 'center-panel' },
+      h('div', { class: 'icon-circle' }, icon('clock')),
+      h('h2', null, 'No cleanings yet'),
+      h('p', { class: 'muted' }, 'Each time you clean, it shows up here.'),
+      h('button', { class: 'btn btn-primary', onclick: () => go('home') }, 'Go to Home'));
+  }
+  return h('div', { class: 'history' },
+    h('p', { class: 'muted' }, `${fmt.plural(stats.cleanings, 'cleaning', 'cleanings')} so far, ${fmt.bytes(stats.bytes_freed)} freed in total.`),
+    data.history.map(e => h('section', { class: 'card history-entry' },
+      h('div', null,
+        h('div', null, h('strong', null, fmt.date(e.time)), e.source === 'scheduled' && h('span', { class: 'badge mode' }, 'Automatic')),
+        h('div', { class: 'faint', style: 'font-size:13px' }, fmt.plural(e.items, 'item removed', 'items removed'))),
+      h('div', { class: 'size num' }, fmt.bytes(e.bytes)),
+      e.categories && e.categories.length > 0 && h('div', { class: 'what' }, e.categories.join(', ')))));
+}
+
+function cookiePickerView(d) {
+  const close = () => { state.drawer = null; render(); };
+  const filter = d.filter.trim().toLowerCase();
+  const sites = d.sites && d.sites.filter(site => site.includes(filter));
+  return h('div', { class: 'scrim', onclick: e => { if (e.target === e.currentTarget) close(); } },
+    h('aside', { class: 'drawer', role: 'dialog', 'aria-label': 'Choose cookies to keep' },
+      h('div', { class: 'drawer-head' },
+        h('div', { class: 'grow' },
+          h('h2', null, 'Choose cookies to keep'),
+          h('p', { class: 'muted' }, 'Sites that have cookies in your browsers. Tick the ones you want to stay signed in to.')),
+        h('button', { class: 'icon-btn', onclick: close, 'aria-label': 'Close' }, icon('close'))),
+      h('div', { class: 'drawer-tools' },
+        h('input', { class: 'field', 'data-key': 'cookie-filter', placeholder: 'Search sites', 'aria-label': 'Search sites', value: d.filter, oninput: e => { d.filter = e.target.value; render(); } })),
+      h('div', { class: 'drawer-body', 'data-scroll-key': 'picker' },
+        sites === null ? h('p', { class: 'drawer-note' }, 'Reading cookies from your browsers\u2026')
+          : sites.length === 0 ? h('p', { class: 'drawer-note' }, filter ? 'No matching sites.' : 'No cookies found. Browsers that are open may be skipped.')
+            : sites.map(site => h('label', { class: 'pick-row' },
+              checkbox({ checked: d.chosen.has(site), label: site, onchange: e => { e.target.checked ? d.chosen.add(site) : d.chosen.delete(site); render(); } }),
+              site))),
+      h('div', { class: 'drawer-foot' },
+        h('span', { class: 'muted' }, `${fmt.plural(d.chosen.size, 'site', 'sites')} chosen`),
+        h('button', { class: 'btn btn-outline', onclick: close }, 'Cancel'),
+        h('button', { class: 'btn btn-primary', onclick: async () => { if (await saveKeptCookies([...d.chosen])) close(); } }, 'Save'))));
 }
 
 // ---------- Overlays ----------
@@ -535,6 +749,7 @@ function settingsView() {
 function drawerView() {
   const d = state.drawer;
   if (!d) return null;
+  if (d.picker) return cookiePickerView(d);
   const close = () => { state.drawer = null; render(); };
   const items = d.items;
   return h('div', { class: 'scrim', onclick: e => { if (e.target === e.currentTarget) close(); } },
@@ -544,12 +759,13 @@ function drawerView() {
           h('h2', null, d.category.label),
           h('p', { class: 'muted' }, `${fmt.plural(d.category.items, 'item', 'items')} · ${fmt.bytes(d.category.bytes)}`)),
         h('button', { class: 'icon-btn', onclick: close, 'aria-label': 'Close' }, icon('close'))),
-      h('div', { class: 'drawer-body' },
+      h('div', { class: 'drawer-body', 'data-scroll-key': 'drawer' },
         items === null ? h('p', { class: 'drawer-note' }, 'Loading…')
           : items.length === 0 ? h('p', { class: 'drawer-note' }, 'These items are not individual files (for example registry entries or a database clean-up).')
-            : items.map(it => h('div', { class: 'path-row', title: it.path },
+            : items.map(it => h('div', { class: `path-row${it.kept ? ' kept' : ''}`, title: it.path },
               h('span', { class: 'p' }, h('bdi', null, it.path)),
-              h('span', { class: 's' }, typeof it.size === 'number' ? fmt.bytes(it.size) : '')))),
+              h('span', { class: 's' }, it.kept ? h('span', { class: 'kept-label' }, 'Never clean') : typeof it.size === 'number' ? fmt.bytes(it.size) : ''),
+              it.kept ? h('span') : h('button', { class: 'icon-btn keep', title: 'Never clean this', 'aria-label': `Never clean ${it.path}`, onclick: () => excludeFound(it) }, icon('shield'))))),
       items && items.length > 0 && items.length < d.category.items &&
         h('p', { class: 'drawer-note' }, `Showing the first ${fmt.count(items.length)} of ${fmt.count(d.category.items)} items.`)));
 }
@@ -582,10 +798,36 @@ function navButton([view, iconName, label]) {
     icon(iconName), h('span', { class: 'tooltip' }, label));
 }
 
+// Overlays already shown, so their opening animation does not replay
+const shownOverlays = new WeakSet();
+const shownToasts = new Set();
+
+/** Mark an overlay element to animate the first time its state appears */
+function entering(key, el) {
+  if (!el) return el;
+  const seen = typeof key === 'object' ? shownOverlays.has(key) : shownToasts.has(key);
+  if (!seen) {
+    el.classList.add('enter');
+    if (typeof key === 'object') shownOverlays.add(key);
+    else {
+      shownToasts.clear();
+      shownToasts.add(key);
+    }
+  }
+  return el;
+}
+
+let lastRenderedView = null;
+
 function render() {
   const root = document.getElementById('app');
   const oldContent = root.querySelector('.content');
   const scrollTop = oldContent ? oldContent.scrollTop : 0;
+  // Re-rendering replaces elements, so carry over focus and scrolling
+  const focused = document.activeElement && document.activeElement.dataset && document.activeElement.dataset.key;
+  const selection = focused ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
+  const scrolls = {};
+  for (const el of root.querySelectorAll('[data-scroll-key]')) scrolls[el.dataset.scrollKey] = el.scrollTop;
   const view = VIEWS[state.view];
   const last = lastScanTime();
 
@@ -603,14 +845,28 @@ function render() {
       h('img', { class: 'logo', src: 'assets/logo.svg', alt: 'Cleanly' }),
       NAV.map(navButton),
       h('div', { class: 'nav-spacer' }),
+      navButton(['history', 'clock', 'History']),
       navButton(['settings', 'settings', 'Settings'])),
     h('div', { class: 'main' }, topbar, content));
 
-  root.replaceChildren(shell, drawerView() || '', dialogView() || '',
-    state.toast ? h('div', { class: 'scrim center', style: 'background:none;pointer-events:none;align-items:flex-end;padding-bottom:28px' },
-      h('div', { class: 'dialog', style: 'width:auto' }, state.toast)) : '');
+  const toast = state.toast && h('div', { class: 'scrim center', style: 'background:none;pointer-events:none;align-items:flex-end;padding-bottom:28px' },
+    h('div', { class: 'dialog', style: 'width:auto' }, state.toast));
+  root.replaceChildren(shell, entering(state.drawer, drawerView()) || '',
+    entering(state.dialog, dialogView()) || '', entering(state.toast, toast) || '');
   const newContent = root.querySelector('.content');
-  if (newContent && oldContent) newContent.scrollTop = scrollTop;
+  // A new page starts at the top
+  if (newContent && oldContent && lastRenderedView === state.view) newContent.scrollTop = scrollTop;
+  lastRenderedView = state.view;
+  for (const el of root.querySelectorAll('[data-scroll-key]')) {
+    if (el.dataset.scrollKey in scrolls) el.scrollTop = scrolls[el.dataset.scrollKey];
+  }
+  if (focused) {
+    const el = root.querySelector(`[data-key="${focused}"]`);
+    if (el) {
+      el.focus();
+      if (selection && el.setSelectionRange) el.setSelectionRange(...selection);
+    }
+  }
 }
 
 async function start() {

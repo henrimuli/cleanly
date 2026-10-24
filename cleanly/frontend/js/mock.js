@@ -69,12 +69,24 @@ export function createMockApi(emit) {
   const stats = {
     bytes_freed: 444.4 * 1000 * MB, items_removed: 991608, cleanings: 38,
     last_scan: null,
+    last_background: { time: Date.now() / 1000 - 3600 * 20, found_bytes: 412 * MB, found_items: 3120, cleaned_bytes: 0, cleaned_items: 0, notified: true },
     history: [
-      { time: Date.now() / 1000 - 86400 * 2, bytes: 812 * MB, items: 2311 },
-      { time: Date.now() / 1000 - 86400 * 9, bytes: 1.3 * 1000 * MB, items: 5120 },
+      { time: Date.now() / 1000 - 86400 * 2, bytes: 812 * MB, items: 2311, source: 'manual', categories: ['Windows temp files', 'Program cache files', 'Google Chrome'] },
+      { time: Date.now() / 1000 - 86400 * 9, bytes: 1.3 * 1000 * MB, items: 5120, source: 'scheduled', categories: ['Windows temp files', 'Program log files', 'Windows log files'] },
     ],
   };
   let timer = null;
+  let settings = {
+    schedule: { frequency: 'weekly', time: '10:00', weekday: 'SUN' },
+    notify: true, notify_min_bytes: 100 * MB, auto_clean: false,
+  };
+  let exclusions = [
+    { type: 'folder', path: 'C:\\Users\\Alex\\AppData\\Local\\Temp\\ProjectBuild' },
+    { type: 'file', path: 'C:\\Users\\Alex\\Documents\\notes.log' },
+  ];
+  let keptCookies = ['github.com', 'mail.google.com'];
+  const cookieSites = ['amazon.com', 'bbc.co.uk', 'github.com', 'google.com', 'mail.google.com',
+    'netflix.com', 'news.ycombinator.com', 'reddit.com', 'stackoverflow.com', 'wikipedia.org', 'youtube.com'];
 
   function run(kind, steps, done) {
     let i = 0;
@@ -154,6 +166,42 @@ export function createMockApi(emit) {
         size: Math.round(c.bytes / Math.max(1, c.items)),
       }));
       return { ok: true, items };
+    },
+    async get_history() { return { history: stats.history, last_background: stats.last_background }; },
+    async get_settings() { return { settings: structuredClone(settings), scheduled: settings.schedule.frequency !== 'off' }; },
+    async save_settings(data) {
+      if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(data.schedule.time)) return { ok: false, error: 'Time must look like 09:30' };
+      settings = structuredClone(data);
+      return { ok: true, settings };
+    },
+    async get_exclusions() { return { ok: true, paths: exclusions }; },
+    async choose_exclusion(type) {
+      const path = type === 'folder' ? 'C:\\Users\\Alex\\Downloads\\Keep' : 'C:\\Users\\Alex\\Desktop\\important.tmp';
+      return this.add_exclusion(type, path);
+    },
+    async add_exclusion(type, path) {
+      if (!exclusions.some(e => e.path === path)) exclusions = [...exclusions, { type, path }];
+      return { ok: true, paths: exclusions };
+    },
+    async exclude_found(path) { return this.add_exclusion('file', path); },
+    async remove_exclusion(path) {
+      exclusions = exclusions.filter(e => e.path !== path);
+      return { ok: true, paths: exclusions };
+    },
+    async get_kept_cookies() { return { ok: true, domains: keptCookies }; },
+    async set_kept_cookies(domains) {
+      const clean = [];
+      for (const d of domains) {
+        const v = d.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^\./, '').split('/')[0];
+        if (!/^([a-z0-9-]+\.)+[a-z]{2,}$/.test(v)) return { ok: false, error: `"${v}" is not a website address` };
+        clean.push(v);
+      }
+      keptCookies = [...new Set(clean)].sort();
+      return { ok: true, domains: keptCookies };
+    },
+    async get_cookie_sites() {
+      await new Promise(r => setTimeout(r, 400));
+      return { ok: true, sites: cookieSites };
     },
   };
 }
