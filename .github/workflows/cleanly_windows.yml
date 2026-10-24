@@ -53,6 +53,15 @@ jobs:
       - name: Build Cleanly.exe
         run: pyinstaller --noconfirm cleanly.spec
 
+      - name: Check that the build starts
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\Cleanly\Cleanly.exe -ArgumentList '--self-check' -Wait -PassThru
+          if ($p.ExitCode -ne 0) {
+            if (Test-Path cleanly-self-check.log) { Get-Content cleanly-self-check.log }
+            throw "Cleanly.exe --self-check exited with $($p.ExitCode)"
+          }
+
       - name: Upload build
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

@@ -21,6 +21,8 @@ datas = [
     ('cleaners/*.xml', 'cleaners'),
     ('share/protected_path.xml', 'share'),
     ('COPYING', '.'),
+    # .NET settings read by the WebView2 backend
+    ('cleanly/Cleanly.exe.config', '.'),
 ]
 
 a = Analysis(

@@ -30,5 +30,11 @@ python -m pytest tests/TestCleanly.py
 pyinstaller --noconfirm cleanly.spec   # Windows: dist/Cleanly/Cleanly.exe
 ```
 
-The `Cleanly Windows` GitHub workflow runs these on every push and uploads the
-build as an artifact.
+The `Cleanly Windows` GitHub workflow runs these on every push, checks that
+`Cleanly.exe --self-check` starts, and uploads the build as an artifact.
+
+Windows marks files extracted from a downloaded zip as coming from the
+internet, and .NET will not load marked DLLs. Cleanly removes the mark from
+its own files at startup and ships `Cleanly.exe.config` to allow them. If an
+old build fails with "Failed to resolve Python.Runtime.Loader.Initialize",
+right-click the zip, choose Properties, tick Unblock, then extract it again.
