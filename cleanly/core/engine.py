@@ -53,38 +53,6 @@ class OptionResult:
         return d
 
 
-class _Collector:
-    """Receives the Worker callbacks and records results per option"""
-
-    def __init__(self, on_progress):
-        self.on_progress = on_progress
-        self.results = {}  # 'cleaner.option' -> OptionResult
-        self.errors = []
-        self.done = threading.Event()
-
-    def on_command_result(self, operation_option, ret):
-        self.results.setdefault(operation_option, OptionResult()).add(ret)
-
-    def append_text(self, text, tag=None):
-        if tag == 'error':
-            self.errors.append(text.strip())
-
-    def update_progress_bar(self, status):
-        if isinstance(status, (int, float)):
-            self.on_progress({'fraction': float(status)})
-        elif isinstance(status, str):
-            self.on_progress({'message': status})
-
-    def update_total_size(self, _size):
-        pass
-
-    def update_item_size(self, _op, _opid, _size):
-        pass
-
-    def worker_done(self, _worker, _really_delete):
-        self.done.set()
-
-
 def _to_operations(option_list):
     """[(cleaner_id, option_id)] -> {cleaner_id: [option_id]}"""
     operations = {}
@@ -93,6 +61,100 @@ def _to_operations(option_list):
         if option_id not in operations[cleaner_id]:
             operations[cleaner_id].append(option_id)
     return operations
+
+
+def _option_label(cleaner_id, option_id):
+    """'Google Chrome: Cache' for progress messages"""
+    cleaner = backends[cleaner_id]
+    cleaner_name = cleaner.get_name() or cleaner_id
+    for oid, name in cleaner.get_options():
+        if oid == option_id:
+            return '%s: %s' % (cleaner_name, name)
+    return cleaner_name
+
+
+class _Collector:
+    """Receives the Worker callbacks and records results per option
+
+    Progress counts finished options, so it moves steadily from 0 to 1,
+    and reports the running totals so a long option never looks stuck.
+    """
+
+    # Seconds between progress events while one option is running
+    PROGRESS_INTERVAL = 0.1
+
+    def __init__(self, on_progress, operations):
+        self.on_progress = on_progress
+        self.results = {}  # 'cleaner.option' -> OptionResult
+        self.errors = []
+        self.done = threading.Event()
+        # The Worker runs the options in this order
+        self.order = [(cid, oid) for cid, oids in operations.items()
+                      for oid in oids]
+        self.finished = 0
+        self.items = 0
+        self.bytes = 0
+        self.timings = {}  # 'cleaner.option' -> seconds
+        self._option_started = time.time()
+        self._last_emit = 0
+
+    def _emit(self, force=False):
+        now = time.time()
+        if not force and now - self._last_emit < self.PROGRESS_INTERVAL:
+            return
+        self._last_emit = now
+        total = len(self.order) or 1
+        message = ''
+        if self.finished < len(self.order):
+            message = _option_label(*self.order[self.finished])
+        self.on_progress({
+            'fraction': min(1.0, self.finished / total),
+            'message': message,
+            'items': self.items,
+            'bytes': self.bytes,
+        })
+
+    def start(self):
+        self._option_started = time.time()
+        self._emit(force=True)
+
+    def on_command_result(self, operation_option, ret):
+        result = self.results.setdefault(operation_option, OptionResult())
+        before_items, before_bytes = result.items, result.bytes
+        result.add(ret)
+        self.items += result.items - before_items
+        self.bytes += result.bytes - before_bytes
+        self._emit()
+
+    def append_text(self, text, tag=None):
+        if tag == 'error':
+            self.errors.append(text.strip())
+
+    def update_progress_bar(self, _status):
+        # Progress comes from finished options instead (see _emit)
+        pass
+
+    def update_total_size(self, _size):
+        pass
+
+    def update_item_size(self, op, opid, _size):
+        if opid == -1:  # the whole cleaner is done
+            return
+        now = time.time()
+        self.timings['%s.%s' % (op, opid)] = now - self._option_started
+        self._option_started = now
+        self.finished += 1
+        self._emit(force=True)
+
+    def worker_done(self, _worker, _really_delete):
+        self.done.set()
+
+    def slowest(self, n=25):
+        """The n slowest options, for diagnosing slow scans"""
+        ranked = sorted(self.timings.items(), key=lambda kv: kv[1],
+                        reverse=True)
+        return [{'option': op, 'seconds': round(sec, 2)}
+                for op, sec in ranked[:n]]
 
 
 class Engine:
@@ -125,12 +187,13 @@ class Engine:
 
     def _run(self, really_delete, option_list, on_progress):
         """Run the Worker to completion; return the collector"""
-        collector = _Collector(on_progress)
         operations = _to_operations(option_list)
+        collector = _Collector(on_progress, operations)
         if not operations:
             collector.worker_done(None, really_delete)
             return collector
         self._worker = Worker.Worker(collector, really_delete, operations)
+        collector.start()
         try:
             for ret in self._worker.run():
                 if not ret:
@@ -162,22 +225,28 @@ class Engine:
         if worker is not None:
             worker.abort()
 
-    def _refresh_running(self):
-        for category in self.categories:
-            if category.kind == 'browser':
-                try:
-                    category.running = backends[category.id].is_process_running(
-                    )
-                except Exception:
-                    logger.debug('running check failed for %s', category.id,
-                                 exc_info=True)
-                    category.running = False
+    @staticmethod
+    def _running_cleaners(option_list):
+        """Cleaner ids among option_list whose application is open"""
+        running = set()
+        for cleaner_id in {cid for cid, _oid in option_list}:
+            try:
+                if backends[cleaner_id].is_process_running():
+                    running.add(cleaner_id)
+            except Exception:
+                logger.debug('running check failed for %s', cleaner_id,
+                             exc_info=True)
+        return running
 
     def scan(self, on_progress, on_done):
         """Preview every category option in a background thread
 
         Every option is scanned whatever the cleaning mode, so switching
         mode in the UI only changes which rows are checked.
+
+        Applications that are open are skipped: they lock their files
+        (browsers hold their databases, and each locked database makes
+        the preview wait), and they could not be cleaned anyway.
         """
         option_list = [option for category in self.categories
                        for option in category.options]
@@ -185,15 +254,24 @@ class Engine:
         def do_scan():
             started = time.time()
             try:
-                collector = self._run(False, option_list, on_progress)
+                running = self._running_cleaners(option_list)
+                for category in self.categories:
+                    category.running = (category.kind == 'browser'
+                                        and category.id in running)
+                collector = self._run(
+                    False, [o for o in option_list if o[0] not in running],
+                    on_progress)
                 if self._cancelled:
                     on_done({'cancelled': True})
                     return
-                self._refresh_running()
                 self.last_scan = ScanResult(self.categories, collector,
-                                            started, time.time())
+                                            started, time.time(), running)
                 if self.stats:
                     self.stats.record_scan(self.last_scan.summary())
+                    self.stats.save_report('scan-timings.json', {
+                        'seconds': round(time.time() - started, 1),
+                        'slowest': collector.slowest(),
+                    })
                 on_done(self.last_scan.to_dict())
             except Exception as e:
                 logger.exception('scan failed')
@@ -246,8 +324,10 @@ class Engine:
 class ScanResult:
     """Scan results grouped by category"""
 
-    def __init__(self, categories, collector, started, finished):
+    def __init__(self, categories, collector, started, finished,
+                 running=()):
         self.categories = categories
+        self.running = sorted(running)
         self.results = collector.results
         self.errors = collector.errors
         self.started = started
@@ -291,6 +371,8 @@ class ScanResult:
             'finished': self.finished,
             'categories': categories,
             'errors': self.errors,
+            'skipped_running': [backends[cid].get_name()
+                                for cid in self.running if cid in backends],
         }
 
     def summary(self):

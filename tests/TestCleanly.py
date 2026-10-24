@@ -132,14 +132,14 @@ class EngineTestCase(common.BleachbitTestCase):
         backends.update(self.saved_backends)
         super().tearDown()
 
-    def _wait(self, start):
+    def _wait(self, start, on_progress=lambda _p: None):
         done = threading.Event()
         result = {}
 
         def on_done(r):
             result.update(r)
             done.set()
-        start(lambda _p: None, on_done)
+        start(on_progress, on_done)
         self.assertTrue(done.wait(30))
         return result
 
@@ -167,6 +167,27 @@ class EngineTestCase(common.BleachbitTestCase):
         self.assertEqual(stats['cleanings'], 1)
         self.assertEqual(stats['bytes_freed'], temp['bytes'])
         self.assertIsNone(self.engine.last_scan)
+
+    def test_scan_progress(self):
+        events = []
+        self._wait(self.engine.scan, events.append)
+        fractions = [e['fraction'] for e in events]
+        self.assertEqual(fractions, sorted(fractions))
+        self.assertEqual(fractions[0], 0)
+        self.assertEqual(fractions[-1], 1)
+        self.assertEqual(events[-1]['items'], 2)
+        self.assertEqual(events[0]['message'], 'app: name1')
+        report = os.path.join(os.path.dirname(self.stats.path),
+                              'scan-timings.json')
+        self.assertExists(report)
+
+    def test_scan_skips_running_app(self):
+        with mock.patch.object(backends['app'], 'is_process_running',
+                               return_value=True):
+            result = self._wait(self.engine.scan)
+        self.assertEqual(result['skipped_running'],
+                         [backends['app'].get_name()])
+        self.assertEqual(result['categories'][0]['items'], 0)
 
     def test_clean_rejects_unknown_operation(self):
         with self.assertRaises(ValueError):

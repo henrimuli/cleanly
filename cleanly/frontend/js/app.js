@@ -93,7 +93,7 @@ async function refreshOverview() {
 async function startScan() {
   const res = await state.api.start_scan();
   if (!res.ok) return showToast(res.error);
-  state.job = { kind: 'scan', fraction: 0, message: 'Getting ready…' };
+  state.job = { kind: 'scan', fraction: 0, message: 'Getting ready\u2026', items: 0, bytes: 0 };
   render();
 }
 
@@ -123,7 +123,7 @@ async function startClean() {
   state.dialog = null;
   const res = await state.api.start_clean(selectedOperations());
   if (!res.ok) return showToast(res.error);
-  state.job = { kind: 'clean', fraction: 0, message: 'Cleaning…' };
+  state.job = { kind: 'clean', fraction: 0, message: 'Getting ready\u2026', items: 0, bytes: 0 };
   state.lastClean = null;
   state.view = 'result';
   render();
@@ -153,18 +153,13 @@ function go(view) {
 
 // ---------- Events from Python ----------
 
-on('scan-progress', p => {
+function onProgress(p) {
   if (!state.job) return;
-  if (p.fraction !== undefined) state.job.fraction = p.fraction;
-  if (p.message) state.job.message = p.message.replace(/^Please wait\.\s+/, '');
+  Object.assign(state.job, p);
   render();
-});
-on('clean-progress', p => {
-  if (!state.job) return;
-  if (p.fraction !== undefined) state.job.fraction = p.fraction;
-  if (p.message) state.job.message = p.message.replace(/^Please wait\.\s+/, '');
-  render();
-});
+}
+on('scan-progress', onProgress);
+on('clean-progress', onProgress);
 on('scan-done', async result => {
   state.job = null;
   if (result.error) showToast(`Scan failed: ${result.error}`);
@@ -186,24 +181,48 @@ on('clean-done', async result => {
 
 // ---------- Shared pieces ----------
 
-function checkbox({ checked, indeterminate, onchange, label }) {
-  const el = h('input', { type: 'checkbox', class: 'check', 'aria-label': label, onclick: e => e.stopPropagation(), onchange });
+function checkbox({ checked, indeterminate, onchange, label, disabled }) {
+  const el = h('input', { type: 'checkbox', class: 'check', 'aria-label': label, disabled, onclick: e => e.stopPropagation(), onchange });
   el.checked = !!checked;
   el.indeterminate = !!indeterminate;
   return el;
 }
 
-function ring(fraction, spinning) {
-  const r = 46;
-  const circumference = 2 * Math.PI * r;
-  const offset = spinning ? circumference * 0.72 : circumference * (1 - Math.min(1, Math.max(0, fraction)));
-  const svg = `<svg class="ring${spinning ? ' spin' : ''}" viewBox="0 0 112 112" aria-hidden="true">
-    <circle class="track" cx="56" cy="56" r="${r}"/>
-    <circle class="bar" cx="56" cy="56" r="${r}" stroke-dasharray="${circumference}" stroke-dashoffset="${offset}"/></svg>`;
-  const span = document.createElement('span');
-  span.style.display = 'contents';
-  span.innerHTML = svg;
-  return span.firstElementChild;
+const RING_RADIUS = 46;
+const RING_LENGTH = 2 * Math.PI * RING_RADIUS;
+let ringNode = null;
+
+/**
+ * Progress ring with the percentage inside. The same element is reused
+ * across renders so the band grows smoothly instead of jumping.
+ */
+function ring(job) {
+  if (!ringNode) {
+    const span = document.createElement('span');
+    span.innerHTML = `<svg class="ring" viewBox="0 0 112 112" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+      <circle class="track" cx="56" cy="56" r="${RING_RADIUS}"/>
+      <circle class="bar" cx="56" cy="56" r="${RING_RADIUS}" stroke-dasharray="${RING_LENGTH}" stroke-dashoffset="${RING_LENGTH}"/>
+      <text class="pct" x="56" y="56" text-anchor="middle" dominant-baseline="central">0%</text></svg>`;
+    ringNode = span.firstElementChild;
+  }
+  const fraction = Math.min(1, Math.max(0, job.fraction || 0));
+  const percent = Math.floor(fraction * 100);
+  // Before the first step finishes, a short spinning arc shows activity
+  const waiting = fraction === 0;
+  ringNode.classList.toggle('spin', waiting);
+  ringNode.querySelector('.bar').setAttribute('stroke-dashoffset',
+    waiting ? RING_LENGTH * 0.85 : RING_LENGTH * (1 - fraction));
+  ringNode.querySelector('.pct').textContent = `${percent}%`;
+  ringNode.setAttribute('aria-valuenow', String(percent));
+  return ringNode;
+}
+
+function jobDetails(job) {
+  const found = job.kind === 'scan' ? 'found' : 'removed';
+  return [
+    h('p', { class: 'muted job-step' }, job.message || '\u00a0'),
+    h('p', { class: 'faint' }, job.items ? `${fmt.plural(job.items, 'item', 'items')} ${found} \u00b7 ${fmt.bytes(job.bytes)}` : '\u00a0'),
+  ];
 }
 
 function lastScanTime() {
@@ -235,10 +254,10 @@ function homeView() {
   let hero;
   if (job) {
     hero = h('section', { class: 'card hero' },
-      ring(job.fraction, job.fraction <= 0),
+      ring(job),
       h('div', { class: 'hero-body' },
-        h('div', { class: 'big' }, job.kind === 'scan' ? 'Scanning your PC…' : 'Cleaning…'),
-        h('p', { class: 'muted' }, job.message || ''),
+        h('div', { class: 'big' }, job.kind === 'scan' ? 'Scanning your PC\u2026' : 'Cleaning\u2026'),
+        jobDetails(job),
         job.kind === 'scan' && h('div', { class: 'actions' },
           h('button', { class: 'btn btn-outline', onclick: cancelJob }, 'Cancel'))));
   } else if (state.scan) {
@@ -271,7 +290,7 @@ function homeView() {
     tile('files', 'Junk files', state.scan ? fmt.bytes(sum(disk)) : '—',
       state.scan ? `Found in ${fmt.plural(disk.length, 'category', 'categories')}` : 'Scan to see what can go', 'clean'),
     tile('globe', 'Browsers', state.scan ? fmt.bytes(sum(browsers)) : '—',
-      runningBrowsers.length ? `${runningBrowsers.map(b => b.label).join(', ')} open: close to clean` : state.scan ? `${fmt.plural(browsers.length, 'browser', 'browsers')} with junk` : 'Caches, history and cookies', 'clean'),
+      runningBrowsers.length ? `${runningBrowsers.map(b => b.label).join(', ')} open: close to scan` : state.scan ? `${fmt.plural(browsers.length, 'browser', 'browsers')} with junk` : 'Caches, history and cookies', 'clean'),
     tile('apps', 'Apps', '', 'Find and uninstall apps you no longer use.', 'apps', true),
     tile('disk', 'Disks', '', 'Optimize drives and check their health.', 'disks', true));
 
@@ -295,9 +314,9 @@ function needScanPanel() {
   const job = state.job;
   if (job) {
     return h('div', { class: 'center-panel' },
-      ring(job.fraction, job.fraction <= 0),
-      h('h2', null, job.kind === 'scan' ? 'Scanning your PC…' : 'Cleaning…'),
-      h('p', { class: 'muted' }, job.message || ''),
+      ring(job),
+      h('h2', null, job.kind === 'scan' ? 'Scanning your PC\u2026' : 'Cleaning\u2026'),
+      jobDetails(job),
       job.kind === 'scan' && h('button', { class: 'btn btn-outline', onclick: cancelJob }, 'Cancel'));
   }
   return h('div', { class: 'center-panel' },
@@ -367,7 +386,18 @@ function diskTable(disk) {
           h('span', { class: 'cell-num' }, fmt.bytes(c.bytes)),
           h('span', { class: 'chev' }, icon('chevron')));
       }) : h('div', { class: 'row' }, h('span'), h('span', { class: 'muted' }, 'No junk files found.'))),
-    cleanCount > 0 && h('div', { class: 'clean-note' }, icon('check'), `${fmt.plural(cleanCount, 'other category is', 'other categories are')} already clean.`));
+    cleanCount > 0 && h('div', { class: 'clean-note' }, icon('check'), `${fmt.plural(cleanCount, 'other category is', 'other categories are')} already clean.`),
+    skippedNote());
+}
+
+/** Note naming non-browser apps the last scan skipped because they were open */
+function skippedNote() {
+  const browserNames = new Set(state.scan.categories.filter(c => c.kind === 'browser').map(c => c.label));
+  const apps = (state.scan.skipped_running || []).filter(name => !browserNames.has(name));
+  if (!apps.length) return null;
+  const one = apps.length === 1;
+  return h('div', { class: 'clean-note' }, icon('info'),
+    `Not scanned because ${one ? 'it is' : 'they are'} open: ${apps.join(', ')}. Close ${one ? 'it' : 'them'} and scan again to include ${one ? 'it' : 'them'}.`);
 }
 
 function browserTable(browsers) {
@@ -379,12 +409,23 @@ function browserTable(browsers) {
       const s = categoryState(c);
       const open = state.expanded.has(c.id);
       const toggle = () => { open ? state.expanded.delete(c.id) : state.expanded.add(c.id); render(); };
+      const avatar = h('span', { class: 'avatar', style: `background:${BROWSER_COLORS[i % BROWSER_COLORS.length]}` }, c.label[0]);
+      if (c.running) {
+        return h('div', { class: 'row', role: 'row' },
+          checkbox({ checked: false, disabled: true, label: c.label }),
+          h('div', { class: 'browser-name' }, avatar,
+            h('div', { class: 'name' },
+              h('div', { class: 'title' }, c.label, h('span', { class: 'badge warn' }, 'Open')),
+              h('div', { class: 'desc' }, `Not scanned while it is open. Close ${c.label} and scan again.`))),
+          h('span', { class: 'cell-num' }, '\u2014'),
+          h('span', { class: 'cell-num' }, '\u2014'),
+          h('span'));
+      }
       const row = h('div', { class: `row clickable${open ? ' open' : ''}`, role: 'row', onclick: toggle, 'aria-expanded': String(open) },
         checkbox({ ...s, label: c.label, onchange: e => setChecked(s.ids, e.target.checked) }),
-        h('div', { class: 'browser-name' },
-          h('span', { class: 'avatar', style: `background:${BROWSER_COLORS[i % BROWSER_COLORS.length]}` }, c.label[0]),
+        h('div', { class: 'browser-name' }, avatar,
           h('div', { class: 'name' },
-            h('div', { class: 'title' }, c.label, c.running && h('span', { class: 'badge warn' }, 'Open: close to clean')),
+            h('div', { class: 'title' }, c.label),
             h('div', { class: 'desc' }, `${fmt.plural(c.options.filter(o => o.items > 0).length, 'kind of data', 'kinds of data')} found`))),
         h('span', { class: 'cell-num' }, fmt.count(c.items)),
         h('span', { class: 'cell-num' }, fmt.bytes(c.bytes)),
@@ -408,9 +449,9 @@ function resultView() {
   const job = state.job;
   if (job && job.kind === 'clean') {
     return h('div', { class: 'center-panel' },
-      h('h2', null, 'Cleaning…'),
-      h('p', { class: 'muted' }, job.message || ''),
-      h('div', { class: 'progress' }, h('div', { style: `width:${Math.round(job.fraction * 100)}%` })));
+      ring(job),
+      h('h2', null, 'Cleaning\u2026'),
+      jobDetails(job));
   }
   const r = state.lastClean;
   if (!r) return needScanPanel();

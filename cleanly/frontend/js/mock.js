@@ -35,6 +35,7 @@ function fakeScan() {
     started: now - 6,
     finished: now,
     errors: [],
+    skipped_running: ['Google Chrome', 'Discord'],
     categories: [
       disk('recycle_bin', 'Recycle Bin', 'Files you deleted that are still kept in the Recycle Bin.', 6, 571.6 * MB, { default: false }),
       disk('windows_temp', 'Windows temp files', 'Temporary files Windows created and no longer needs.', 622, 42.0 * MB),
@@ -46,12 +47,10 @@ function fakeScan() {
       disk('crash_reports', 'Crash reports and memory dumps', 'Reports saved after programs or Windows crashed.', 0, 0),
       disk('recent_activity', 'Recent activity', 'Lists of recently opened files, searches and commands.', 214, 0.9 * MB, { mode: 'full' }),
       disk('system_caches', 'System caches', 'Prefetch, MUICache and DNS cache.', 133, 24.2 * MB, { mode: 'full' }),
+      // Open while scanning, so it was skipped
       browser('google_chrome', 'Google Chrome', true, [
-        ['cache', 'Cache', 'basic', 12109, 470.2 * MB],
-        ['crash_reports', 'Crash reports', 'basic', 21, 7.0 * MB],
-        ['cookies', 'Cookies', 'full', 1, 1.2 * MB],
-        ['history', 'Browsing history', 'full', 3, 9.8 * MB],
-        ['session', 'Open tabs and session', 'full', 4, 0.6 * MB],
+        ['cache', 'Cache', 'basic', 0, 0],
+        ['cookies', 'Cookies', 'full', 0, 0],
       ]),
       browser('microsoft_edge', 'Microsoft Edge', false, [
         ['cache', 'Cache', 'basic', 5410, 96.4 * MB],
@@ -79,17 +78,23 @@ export function createMockApi(emit) {
 
   function run(kind, steps, done) {
     let i = 0;
-    const names = ['System', 'Google Chrome', 'Microsoft Edge', 'Firefox', 'Discord', 'VS Code'];
+    const names = ['System: Temporary files', 'Microsoft Edge: Cache', 'Firefox: Cache',
+      'Discord: Cache', 'VS Code: Logs', 'Windows Explorer: Thumbnails'];
+    emit(`${kind}-progress`, { fraction: 0, message: names[0], items: 0, bytes: 0 });
     timer = setInterval(() => {
       i += 1;
-      emit(`${kind}-progress`, { fraction: i / steps });
-      emit(`${kind}-progress`, { message: `Please wait.  ${kind === 'scan' ? 'Previewing' : 'Cleaning'} ${names[i % names.length]}.` });
+      emit(`${kind}-progress`, {
+        fraction: i / steps,
+        message: names[i % names.length],
+        items: i * 1367,
+        bytes: i * 48 * MB,
+      });
       if (i >= steps) {
         clearInterval(timer);
         timer = null;
         done();
       }
-    }, 180);
+    }, 350);
   }
 
   return {

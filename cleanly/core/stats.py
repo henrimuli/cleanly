@@ -83,6 +83,16 @@ class Stats:
             del self.data['history'][MAX_HISTORY:]
             self._save()
 
+    def save_report(self, name, data):
+        """Write a diagnostic file such as scan-timings.json next to stats"""
+        path = os.path.join(os.path.dirname(self.path), name)
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=1)
+        except OSError:
+            logger.warning('Could not write %s', path, exc_info=True)
+
     def to_dict(self):
         with self._lock:
             return json.loads(json.dumps(self.data))
